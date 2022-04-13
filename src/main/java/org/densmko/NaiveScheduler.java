@@ -1,6 +1,7 @@
 package org.densmko;
 
 import org.junit.runners.model.RunnerScheduler;
+
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Phaser;
@@ -40,11 +41,21 @@ public class NaiveScheduler implements RunnerScheduler {
 
     private static class NaiveThreadFactory implements ThreadFactory {
         final ThreadGroup group = new ThreadGroup("parallel-runner");
-        AtomicInteger counter = new AtomicInteger();
+        final AtomicInteger counter = new AtomicInteger();
+
+        private final ClassLoader parentClassLoader;
+
+
+        public NaiveThreadFactory() {
+            parentClassLoader = Thread.currentThread().getContextClassLoader();
+        }
 
         @Override
         public Thread newThread(Runnable r) {
-            return new Thread(group,r, String.format("runner-%d",counter.incrementAndGet()));
+            Thread.currentThread().setContextClassLoader(new ParallelRunnerClassLoader(parentClassLoader));
+            return new Thread(group, r, String.format("runner-%d", counter.incrementAndGet()));
         }
+
     }
+
 }

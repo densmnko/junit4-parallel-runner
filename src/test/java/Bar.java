@@ -7,6 +7,10 @@ import static org.junit.Assert.assertTrue;
 
 public class Bar {
 
+    static {
+        System.out.println("Bar.class static init");
+    }
+
     final private static AtomicInteger counter = new AtomicInteger(0);
     public static final long SLEEP_MILLIS = 250L;
 

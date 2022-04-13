@@ -104,11 +104,13 @@ public class ParallelSuiteRunner extends ParentRunner<Runner> {
             final Method method;
             final Object parameter;
             final String output;
+            final String generalOut;
 
-            Event(Method method, Object parameter, String output) {
+            Event(Method method, Object parameter, String output, String generalOut) {
                 this.method = method;
                 this.parameter = parameter;
                 this.output = output;
+                this.generalOut = generalOut;
             }
         }
 
@@ -192,19 +194,17 @@ public class ParallelSuiteRunner extends ParentRunner<Runner> {
         }
 
         private void record(Method method, Object parameter) {
-            events.add(new Event(method, parameter, runnerStream.getAndReset(currentThread)));
+            events.add(new Event(method, parameter, runnerStream.getAndReset(currentThread), runnerStream.getAndResetGeneral()));
 
         }
-
 
         protected void replay(RunNotifier notifier) {
             events.forEach(e -> replayEvent(notifier, e));
         }
 
         private void replayEvent(RunNotifier notifier, Event event) {
-            if (event.output != null && !event.output.isEmpty()) {
-                systemOut.append(event.output);
-            }
+            writeSystemOut(event.generalOut, systemOut);
+            writeSystemOut(event.output, systemOut);
             switch (event.method) {
                 case fireTestRunStarted:
                     notifier.fireTestRunStarted((Description) event.parameter);
@@ -248,6 +248,8 @@ public class ParallelSuiteRunner extends ParentRunner<Runner> {
         System.out.format("%s: runChild: %s\n", currentThread, runner.getDescription());
         final RunNotifierRecorder recorder = new RunNotifierRecorder(runnerStream, currentThread, systemOut);
         final String prefix = runnerStream.getAndReset(currentThread);
+        final String prefixGen = runnerStream.getAndResetGeneral();
+
         RuntimeException exception = null;
         try {
             runner.run(recorder);
@@ -255,17 +257,22 @@ public class ParallelSuiteRunner extends ParentRunner<Runner> {
             exception = e;
         }
         synchronized (this) {
-            if (prefix != null && !prefix.isEmpty()) {
-                systemOut.append(prefix);
-            }
+            writeSystemOut(prefix, systemOut);
+            writeSystemOut(prefixGen, systemOut);
             recorder.replay(notifier);
             final String postfix = runnerStream.getAndReset(currentThread);
-            if (postfix != null && !postfix.isEmpty()) {
-                systemOut.append(postfix);
-            }
+            writeSystemOut(postfix, systemOut);
+            final String postfixGen = runnerStream.getAndReset(currentThread);
+            writeSystemOut(postfixGen, systemOut);
             if (exception != null) {
                 throw exception;
             }
+        }
+    }
+
+    static void writeSystemOut(String string, PrintStream systemOut) {
+        if (string != null && !string.isEmpty()) {
+            systemOut.append(string);
         }
     }
 }
