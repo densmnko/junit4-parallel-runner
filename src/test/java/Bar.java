@@ -1,6 +1,33 @@
 import org.junit.Test;
 
-public class Bar extends Foo {
+import java.lang.management.ManagementFactory;
+import java.util.concurrent.atomic.AtomicInteger;
+
+import static org.junit.Assert.assertTrue;
+
+public class Bar {
+
+    final private static AtomicInteger counter = new AtomicInteger(0);
+    public static final long SLEEP_MILLIS = 250L;
+
+    public void test(String name, boolean result) {
+        int id = counter.incrementAndGet();
+        System.out.format("%d: %s:%s, %s, thread: %s\n"
+                , id
+                , getClass()
+                , name == null ? "test" : name
+                , ManagementFactory.getRuntimeMXBean().getName()
+                , Thread.currentThread());
+        try {
+            Thread.sleep(SLEEP_MILLIS);
+        } catch (InterruptedException e) {
+            e.printStackTrace();
+        }
+        assertTrue(name + ": assertion", result);
+        System.out.println(id + ": done");
+    }
+
+
 
     @Test
     public void bar() {
@@ -8,9 +35,13 @@ public class Bar extends Foo {
     }
 
     @Test
-    public void foobar() throws InterruptedException {
-        Thread.sleep(500L);
-        test("foobar throws", true);
+    public void foobar() {
+        test("foobar", true);
+    }
+
+    @Test
+    public void barbar() {
+        test("barbar", true);
     }
 
 }

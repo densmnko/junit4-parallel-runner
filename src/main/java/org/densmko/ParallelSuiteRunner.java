@@ -12,6 +12,7 @@ import org.junit.runners.Suite;
 import org.junit.runners.model.InitializationError;
 import org.junit.runners.model.RunnerBuilder;
 
+import java.io.PrintStream;
 import java.lang.annotation.*;
 import java.util.*;
 
@@ -22,6 +23,9 @@ import java.util.*;
 public class ParallelSuiteRunner extends ParentRunner<Runner> {
 
     private final Map<Runner, Integer> runners;
+
+    private final PrintStream systemOut;
+    private final RunnerOutputStream runnerStream;
 
 
     /**
@@ -53,13 +57,15 @@ public class ParallelSuiteRunner extends ParentRunner<Runner> {
         }
         this.runners = Collections.unmodifiableMap(runners);
         setScheduler(new NaiveScheduler(suites.length));
+        systemOut = System.out;
+        runnerStream = new RunnerOutputStream();
+        System.setOut(new PrintStream(runnerStream));
     }
 
     @Override
     public void run(RunNotifier notifier) {
         super.run(notifier);
     }
-
 
 
     private static Suite.SuiteClasses[] getSuites(Class<?> klass) throws InitializationError {
@@ -80,28 +86,29 @@ public class ParallelSuiteRunner extends ParentRunner<Runner> {
 
     static class RunNotifierRecorder extends RunNotifier {
 
+        private final RunnerOutputStream runnerStream;
+        private final Thread currentThread;
+        private final PrintStream systemOut;
+
+        RunNotifierRecorder(RunnerOutputStream runnerStream, Thread currentThread, PrintStream systemOut) {
+            this.runnerStream = runnerStream;
+            this.currentThread = currentThread;
+            this.systemOut = systemOut;
+        }
+
         enum Method {
-             addFirstListener
-            ,addListener
-            ,removeListener
-            ,fireTestRunStarted
-            ,fireTestRunFinished
-            ,fireTestSuiteStarted
-            ,fireTestSuiteFinished
-            ,fireTestStarted
-            ,fireTestFailure
-            ,fireTestAssumptionFailed
-            ,fireTestIgnored
-            ,fireTestFinished
-            ,pleaseStop
+            addFirstListener, addListener, removeListener, fireTestRunStarted, fireTestRunFinished, fireTestSuiteStarted, fireTestSuiteFinished, fireTestStarted, fireTestFailure, fireTestAssumptionFailed, fireTestIgnored, fireTestFinished, pleaseStop
         }
 
         static class Event {
             final Method method;
             final Object parameter;
-            Event(Method method, Object parameter) {
+            final String output;
+
+            Event(Method method, Object parameter, String output) {
                 this.method = method;
                 this.parameter = parameter;
+                this.output = output;
             }
         }
 
@@ -127,55 +134,55 @@ public class ParallelSuiteRunner extends ParentRunner<Runner> {
         @Override
         public void fireTestRunStarted(Description description) {
             System.out.println("notifier.fireTestRunStarted(description): " + description);
-            record(Method.fireTestRunStarted,description);
+            record(Method.fireTestRunStarted, description);
         }
 
         @Override
         public void fireTestRunFinished(Result result) {
             System.out.println("notifier.fireTestRunFinished(result): " + result);
-            record(Method.fireTestRunFinished,result);
+            record(Method.fireTestRunFinished, result);
         }
 
         @Override
         public void fireTestSuiteStarted(Description description) {
             System.out.println("notifier.fireTestSuiteStarted(description): " + description);
-            record(Method.fireTestSuiteStarted,description);
+            record(Method.fireTestSuiteStarted, description);
         }
 
         @Override
         public void fireTestSuiteFinished(Description description) {
             System.out.println("notifier.fireTestSuiteFinished(description): " + description);
-            record(Method.fireTestSuiteFinished,description);
+            record(Method.fireTestSuiteFinished, description);
         }
 
         @Override
         public void fireTestStarted(Description description) throws StoppedByUserException {
             System.out.println("notifier.fireTestStarted(description): " + description);
-            record(Method.fireTestStarted,description);
+            record(Method.fireTestStarted, description);
         }
 
         @Override
         public void fireTestFailure(Failure failure) {
             System.out.println("notifier.fireTestFailure(failure): " + failure);
-            record(Method.fireTestFailure,failure);
+            record(Method.fireTestFailure, failure);
         }
 
         @Override
         public void fireTestAssumptionFailed(Failure failure) {
             System.out.println("notifier.fireTestAssumptionFailed(failure): " + failure);
-            record(Method.fireTestAssumptionFailed,failure);
+            record(Method.fireTestAssumptionFailed, failure);
         }
 
         @Override
         public void fireTestIgnored(Description description) {
             System.out.println("notifier.fireTestIgnored(description): " + description);
-            record(Method.fireTestIgnored,description);
+            record(Method.fireTestIgnored, description);
         }
 
         @Override
         public void fireTestFinished(Description description) {
             System.out.println("notifier.fireTestFinished(description): " + description);
-            record(Method.fireTestFinished,description);
+            record(Method.fireTestFinished, description);
         }
 
         @Override
@@ -185,16 +192,19 @@ public class ParallelSuiteRunner extends ParentRunner<Runner> {
         }
 
         private void record(Method method, Object parameter) {
-            events.add(new Event(method,parameter));
+            events.add(new Event(method, parameter, runnerStream.getAndReset(currentThread)));
 
         }
 
 
         protected void replay(RunNotifier notifier) {
-           events.forEach( e -> replayEvent(notifier, e));
+            events.forEach(e -> replayEvent(notifier, e));
         }
 
         private void replayEvent(RunNotifier notifier, Event event) {
+            if (event.output != null && !event.output.isEmpty()) {
+                systemOut.append(event.output);
+            }
             switch (event.method) {
                 case fireTestRunStarted:
                     notifier.fireTestRunStarted((Description) event.parameter);
@@ -230,14 +240,14 @@ public class ParallelSuiteRunner extends ParentRunner<Runner> {
                     throw new IllegalStateException("unhandled method " + event.method);
             }
         }
-
-
     }
 
 
     protected void runChild(Runner runner, RunNotifier notifier) {
-        System.out.format("%s: runChild: %s\n", Thread.currentThread(), runner.getDescription());
-        final RunNotifierRecorder recorder = new RunNotifierRecorder();
+        final Thread currentThread = Thread.currentThread();
+        System.out.format("%s: runChild: %s\n", currentThread, runner.getDescription());
+        final RunNotifierRecorder recorder = new RunNotifierRecorder(runnerStream, currentThread, systemOut);
+        final String prefix = runnerStream.getAndReset(currentThread);
         RuntimeException exception = null;
         try {
             runner.run(recorder);
@@ -245,13 +255,17 @@ public class ParallelSuiteRunner extends ParentRunner<Runner> {
             exception = e;
         }
         synchronized (this) {
+            if (prefix != null && !prefix.isEmpty()) {
+                systemOut.append(prefix);
+            }
             recorder.replay(notifier);
-            if (exception != null ) {
+            final String postfix = runnerStream.getAndReset(currentThread);
+            if (postfix != null && !postfix.isEmpty()) {
+                systemOut.append(postfix);
+            }
+            if (exception != null) {
                 throw exception;
             }
-
         }
     }
-
-
 }

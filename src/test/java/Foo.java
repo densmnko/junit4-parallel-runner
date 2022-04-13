@@ -10,9 +10,9 @@ import static org.junit.Assert.assertTrue;
 public class Foo {
 
     final private static AtomicInteger counter = new AtomicInteger(0);
+    public static final long SLEEP_MILLIS = 500L;
 
     public void test(String name, boolean result) {
-
         int id = counter.incrementAndGet();
         System.out.format("%d: %s:%s, %s, thread: %s\n"
                 , id
@@ -21,7 +21,7 @@ public class Foo {
                 , ManagementFactory.getRuntimeMXBean().getName()
                 , Thread.currentThread());
         try {
-            Thread.sleep(500L);
+            Thread.sleep(SLEEP_MILLIS);
         } catch (InterruptedException e) {
             e.printStackTrace();
         }
@@ -30,7 +30,12 @@ public class Foo {
     }
 
     @Test
-    public void foo() {
+    public void foo() throws InterruptedException {
+        Thread thread = new Thread( () -> {
+            System.out.println("Have to capture this! " + Thread.currentThread() + ":" + Thread.currentThread().getThreadGroup());
+        });
+        thread.start();
+        thread.join();
         test("foo", true);
     }
 
