@@ -3,15 +3,17 @@ JUnit4 runner to run tests in parallel threads or even processes
 
 The goal is to run legacy JUnit4 tests in parallel with 'IDEA Project', Teamcity 'IntelliJ IDEA Project' build with minimum efforts.
 
-Sample usage: 
+Sample usage:
+
 ```java
+
 @RunWith(ParallelSuiteRunner.class)
 @ParallelSuiteRunner.Suites({
-      @Suite.SuiteClasses({ Foo.class, Bar.class, Foo.class })
-    , @Suite.SuiteClasses({ Foo.class, Bar.class, Bar.class })
+        @Suite.SuiteClasses({org.densmnko.Foo.class, org.densmnko.Bar.class, org.densmnko.Foo.class})
+        , @Suite.SuiteClasses({org.densmnko.Foo.class, org.densmnko.Bar.class, org.densmnko.Bar.class})
 })
-public class FooBar {
-}
+public class org.densmnko.FooBar{
+        }
 ```
 
 Each ```@Suite.SuiteClasses``` will run in parallel, in separate thread and class loader.

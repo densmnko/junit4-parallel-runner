@@ -1,4 +1,4 @@
-package org.densmko;
+package org.densmnko;
 
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;

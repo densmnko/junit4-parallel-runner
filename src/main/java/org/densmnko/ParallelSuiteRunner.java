@@ -1,4 +1,4 @@
-package org.densmko;
+package org.densmnko;
 
 import org.junit.runner.Description;
 import org.junit.runner.Result;
@@ -11,6 +11,8 @@ import org.junit.runners.ParentRunner;
 import org.junit.runners.Suite;
 import org.junit.runners.model.InitializationError;
 import org.junit.runners.model.RunnerBuilder;
+import org.junit.runners.model.RunnerScheduler;
+import org.junit.runners.model.Statement;
 
 import java.io.PrintStream;
 import java.lang.annotation.*;
@@ -22,11 +24,13 @@ import java.util.*;
  */
 public class ParallelSuiteRunner extends ParentRunner<Runner> {
 
-    private final Map<Runner, Integer> runners;
+    private final List<Runner> runners;
+    final List<ParallelRunnerClassLoader> classLoaders;
+    private final Map<Runner, Integer> runnersLanes;
 
     private final PrintStream systemOut;
     private final RunnerOutputStream runnerStream;
-
+    private final NaiveScheduler scheduler;
 
     /**
      * The <code>Suites</code> annotation specifies the list of <code>SuiteClasses</code> to be run in parallel when a class
@@ -37,8 +41,8 @@ public class ParallelSuiteRunner extends ParentRunner<Runner> {
     @Inherited
     public @interface Suites {
         Suite.SuiteClasses[] value();
+        String[] isolate();
     }
-
 
     /**
      * Called reflectively on classes annotated with <code>@RunWith(ParallelSuite.class)</code>
@@ -46,40 +50,47 @@ public class ParallelSuiteRunner extends ParentRunner<Runner> {
      * @param klass   the root class
      * @param builder builds runners for classes in the suite
      */
-    public ParallelSuiteRunner(Class<?> klass, RunnerBuilder builder) throws InitializationError {
+    public ParallelSuiteRunner(Class<?> klass, RunnerBuilder builder) throws InitializationError, ClassNotFoundException {
         super(klass);
-        Suite.SuiteClasses[] suites = getSuites(klass);
-        final Map<Runner, Integer> runners = new HashMap<>();
-        for (int i = 0; i < suites.length; i++) {
-            final int lane = i;
-            builder.runners(klass, Arrays.asList(suites[lane].value()))
-                    .forEach(r -> runners.put(r, lane));
-        }
-        this.runners = Collections.unmodifiableMap(runners);
-        setScheduler(new NaiveScheduler(suites.length));
-        systemOut = System.out;
-        runnerStream = new RunnerOutputStream();
-        System.setOut(new PrintStream(runnerStream));
-    }
-
-    @Override
-    public void run(RunNotifier notifier) {
-        super.run(notifier);
-    }
-
-
-    private static Suite.SuiteClasses[] getSuites(Class<?> klass) throws InitializationError {
         final Suites annotation = klass.getAnnotation(Suites.class);
         if (annotation == null) {
             throw new InitializationError(String.format("class '%s' must have a Suites annotation", klass.getName()));
         }
-        return annotation.value();
+        Suite.SuiteClasses[] suites = annotation.value();
+        final Map<Runner, Integer> runnersLanes = new HashMap<>();
+        final List<Runner> runners = new ArrayList<>();
+        classLoaders = new ArrayList<>();
+        ClassLoader parentClassLoader = Thread.currentThread().getContextClassLoader();
+        for (int i = 0; i < suites.length; i++) {
+            final int lane = i;
+            ParallelRunnerClassLoader classLoader = new ParallelRunnerClassLoader(lane, parentClassLoader, annotation.isolate() );
+            classLoaders.add(classLoader);
+            List<Class<?>> classes = new ArrayList<>();
+            for ( Class<?> aClass : suites[lane].value() ) {
+                Class<?> aClassForLane = Class.forName(aClass.getName(), true, classLoader);
+                classes.add(aClassForLane);
+            }
+            List<Runner> laneRunners = builder.runners(klass, classes);
+            runners.addAll(laneRunners);
+            laneRunners.forEach(r -> runnersLanes.put(r, lane));
+        }
+        this.runnersLanes = Collections.unmodifiableMap(runnersLanes);
+        this.runners = Collections.unmodifiableList(runners);
+        scheduler = new NaiveScheduler(suites.length, this);
+        setScheduler(scheduler);
+        systemOut = System.out;
+        System.out.flush();
+        runnerStream = new RunnerOutputStream();
+        System.setOut(new PrintStream(runnerStream));
     }
+
+
 
     protected List<Runner> getChildren() {
-        return Collections.unmodifiableList(new ArrayList<>(runners.keySet()));
+        return runners;
     }
 
+    @Override
     protected Description describeChild(Runner child) {
         return child.getDescription();
     }
@@ -242,6 +253,28 @@ public class ParallelSuiteRunner extends ParentRunner<Runner> {
         }
     }
 
+    @Override
+    protected Statement childrenInvoker(final RunNotifier notifier) {
+        return new Statement() {
+            @Override
+            public void evaluate() {
+                runChildren(notifier);
+            }
+        };
+    }
+
+    private void runChildren(final RunNotifier notifier) {
+        final RunnerScheduler currentScheduler = scheduler;
+        try {
+            for (final Runner each : getChildren()) {
+                currentScheduler.schedule(new ParallelRunnable(each, notifier));
+            }
+        } finally {
+            currentScheduler.finished();
+        }
+    }
+
+
 
     protected void runChild(Runner runner, RunNotifier notifier) {
         final Thread currentThread = Thread.currentThread();
@@ -270,9 +303,36 @@ public class ParallelSuiteRunner extends ParentRunner<Runner> {
         }
     }
 
+
     static void writeSystemOut(String string, PrintStream systemOut) {
         if (string != null && !string.isEmpty()) {
             systemOut.append(string);
         }
     }
+
+    public class ParallelRunnable implements Runnable {
+
+        private final Runner runner;
+        private final RunNotifier notifier;
+
+        public ParallelRunnable(Runner each, RunNotifier notifier) {
+            this.runner = each;
+            this.notifier = notifier;
+        }
+
+        public Runner getRunner() {
+            return runner;
+        }
+
+        public void run() {
+            runChild(runner, notifier);
+        }
+    }
+
+
+    public int laneOf(Runner runner) {
+        return runnersLanes.get(runner);
+    }
+
+
 }
